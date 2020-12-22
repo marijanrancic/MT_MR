@@ -1,0 +1,553 @@
+---
+title: "Master Thesis 4.0 Misc"
+author: "Marijan Rancic"
+date: "10/10/2020"
+output: html_document
+editor_options: 
+chunk_output_type: inline
+---
+
+## Set working directory
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = "/Users/marijanrancic/Documents/IMQF/Master/QuantRSpace/MasterProject/FinalMasterWork/")
+getwd()
+```
+## Note on R format
+Main version of the thesis will be delivered in RM. 
+This file has been initiated and changed in the Final Version as a file subsequent to PredictiveModeling_Master
+
+```{r libraries, warning=FALSE, include=FALSE}
+# Think about only necessary libraries because of the masking and if you've already initiated Predictive Modeling this is not mandatory
+
+library(readxl)
+library(moments)
+library(tseries)
+# library(MASS)
+library(stats)
+library(ggplot2)
+library(tidyverse)
+library(fpp3)
+#library(forecast)
+#library(reshape2)
+# Depends on the file that are initiated
+```
+
+This part will be to create some data frames and clean/arrange various instances of SEEPEX and HUPX DATA
+
+## Preparatory data work
+
+Data has been provided as Excel document. Make sure that you have data in MS SQL database at some point of time. 
+
+We decided to delete two observation with - prices on HUPX and few with zero price and replace them with price of 0.1EUR
+```{r}
+DBTS %>% filter(RS<=0)
+DBTS %>% filter(HU<=0)
+```
+
+```{r BasicCleaning}
+DBTS$HU[which(DBTS$HU <=0)] = 0.1
+DBTS$RS[which(DBTS$RS <=0)] = 0.1
+```
+And the results:
+```{r}
+DBTS %>% filter(RS<=0)
+DBTS %>% filter(HU<=0)
+```
+
+
+```{r Data_Filter, echo=True}
+
+# Provera da li imamo NA vrednosti cena u datasetu.
+# HUPX NA
+idx1 <- which(is.na(DBTS$LoadF))
+DBTS[idx1,]
+idx2 <- which(is.na(DBTS$temp))
+DBTS[idx1,]
+
+```
+
+#Useful for further work
+If want to create iterable lists we can use this below. This has been developed in a separate file. It is great feature for the com.
+
+```{r}
+iterable.DBTS <- DBTS %>% 
+mutate(hour_num = as.factor(hour_num)) %>% group_by(hour_num) %>% 
+  group_split() %>% 
+map_dfr(.f = function(df){
+ lm(RS ~ HU, data=df) %>% 
+    glance() %>% 
+    add_column(test = unique(df$hour_num),.before = 1)
+}
+  )
+```
+
+# Basic Data Graphics
+## Price 
+
+```{r echo=TRUE}
+library(ggplot2)
+library(gridExtra)
+
+g1 <- ggplot(DBTS, aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(  
+       subtitle="HUPX Spot Price", 
+       x="Date",
+       y="EUR/MWh")
+ggsave(file="Output/DBTS-HU.jpg",g1,width = 18, height = 12, dpi = 300, units = "cm")
+
+# Second graph
+coeff <- 1 #scale levog i desnog grafika, ako je 10 na desnom ce biti 10puta veca vrednost
+g2 <- ggplot(DBTS %>% filter(year(date.time)==2017 | year(date.time)==2018), aes(x=date.time)) +
+  geom_line( aes(y=HU), color='blue') + 
+  geom_line( aes(y=RS), color='brown') + 
+  scale_y_continuous(
+    name = "Hupx peak price - brown", 
+    sec.axis = sec_axis(~.*coeff, name="Seepex peak price - blue")
+  ) + 
+  labs(  caption="Source: Author's own", 
+       subtitle="HUPX-SEEPEX Spread in-sample period")
+
+ggsave(file="Output/DBTS-HU-RS Spread.jpg",g2,width = 18, height = 12, dpi = 300, units = "cm")
+
+```
+
+
+
+Two ways to present Hourly prices on graph. 
+However, first one would generate error if myfunctions are not imported and column hour is erased. 
+
+```{r}
+library(ggplot2)
+
+# ggplot(DBHour("H15"), aes(x=date.time)) + 
+#   geom_line(aes(y=HU)) + 
+#   labs(
+#        subtitle="HUPX Hourly price", 
+#        x="Date",
+#        y="EUR/MWh")
+
+ggplot(DBTS %>% filter(DHour_H15==1), aes(x=datum)) + 
+  geom_line(aes(y=HU)) + 
+  labs(
+       subtitle="HUPX price ar predifined hour", 
+       x="Date",
+       y="EUR/MWh")
+```
+```{r}
+
+g1 <- ggplot(DBTS %>% filter(year(date.time)==2017 & quarter(date.time)==1), aes(x=date.time)) + 
+  geom_line(aes(y=RS)) + 
+  labs(subtitle = "SEEPEX Spot Price, Q1 2017",
+       x="Date",
+       y="EUR/MWh")
+
+
+ggsave(file="Output/spikes_seepex2017_q1.jpg",g1,width = 18, height = 12, dpi = 300, units = "cm")
+```
+
+```{r}
+library(gridExtra)
+g1 <- ggplot(DBTS %>% filter(year(date.time)==2018 & hour(date.time)>=16 & hour(date.time)<20 & quarter(date.time)==1), aes(x=date.time)) + 
+  geom_line(aes(y=RS, colour=DHour)) + 
+  labs(subtitle = "SEEPEX (17-20) Rush hour, Q1 2018",
+    colour ="Hour", 
+       x="Date",
+       y="EUR/MWh")
+g2 <- ggplot(DBTS %>% filter(year(date.time)==2018 & hour(date.time)>=00 & hour(date.time)<04 & quarter(date.time)==1), aes(x=date.time)) + 
+  geom_line(aes(y=RS, colour=DHour)) + 
+  labs(subtitle = "SEEPEX (00-04) Off Peak, Q1 2018",
+       colour="Hour",
+      caption="Source: Author's own", 
+       x="Date",
+       y="EUR/MWh")
+
+gfinal <- grid.arrange (g1,g2)
+ggsave(file="Output/price_rushhours_quat20181.jpg",gfinal)
+rm(g1,g2)
+```
+
+
+```{r}
+library(gridExtra)
+
+
+p1 <- ggplot(DBTS %>% filter(date(date.time)=="2017-04-14" | date(date.time)=="2017-04-15" | date(date.time)=="2017-04-16"| date(date.time)=="2017-04-17"), aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(
+      subtitle ="2017", 
+       x="Date",
+       y="EUR/MWh")
+
+p2 <- ggplot(DBTS %>% filter(date(date.time)=="2018-04-14" | date(date.time)=="2018-04-15" | date(date.time)=="2018-04-16"| date(date.time)=="2018-04-17" ), aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(
+      subtitle ="2018", 
+       x="Date",
+       y="EUR/MWh")
+p3 <- ggplot(DBTS %>% filter(date(date.time)=="2019-04-14" | date(date.time)=="2019-04-15" | date(date.time)=="2019-04-16"| date(date.time)=="2019-04-17"), aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(caption="Source: Author's own",
+      subtitle ="2019", 
+       x="Date",
+       y="EUR/MWh")
+
+pfinal <- grid.arrange (p1,p2,p3)
+ggsave(file="Output/4daysSEEPEX.jpg",pfinal)
+
+
+```
+```{r}
+earlymorning <- DBTS %>% filter(year(date.time)==2018 & hour(date.time)>=8 & hour(date.time)<11) %>% summarise(meanprice=mean(HU))
+earlymorning %>% autoplot(meanprice) +
+  ylab("Mean early morning price") + xlab("Year") 
+```
+
+
+
+## Returns and statistic of FRM data
+Here we will process FRM data
+
+```{r echo=TRUE}
+library(ggplot2)
+
+#izbacicu ove outliere
+frm_smooth1 <-  daily_prices %>% 
+  filter(peak_price <(mean(peak_price) + 3.3 * sd(peak_price)))
+
+ggplot(data_frm, aes(x=date)) + 
+  geom_line(aes(y=peak_price)) + 
+  labs(
+       subtitle="SUPX price price 8AM-8PM", 
+       x="Date",
+       y="EUR/MWh")
+
+```
+
+## Histogram
+
+```{r Graph_HistogramANDPRicesperHOUR}
+library(ggplot2)
+theme_set(theme_bw())
+p1 <- ggplot(DBHour("H04"), aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(
+       subtitle="Hour 4", 
+       x="Date",
+       y="EUR/MWh")
+
+p2 <- ggplot(DBHour("H04"), aes(HU)) +
+  geom_histogram(bins = 100,
+                 col = "grey95",
+                 fill = "black", 
+                 alpha = .80) +
+  labs(x = "EUR/MWh", y = "Frequency",subtitle="Hour 4") +
+  theme(title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10, face = "bold"))
+p3 <- ggplot(DBHour("H10"), aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(
+       subtitle="Hour 10", 
+       x="Date",
+       y="EUR/MWh")
+
+p4 <- ggplot(DBHour("H10"), aes(HU)) +
+  geom_histogram(bins = 100,
+                 col = "grey95",
+                 fill = "black", 
+                 alpha = .80) +
+  labs(x = "EUR/MWh", y = "Frequency",subtitle="Hour 10") +
+  theme(title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10, face = "bold"))
+
+p5 <- ggplot(DBHour("H20"), aes(x=date.time)) + 
+  geom_line(aes(y=HU)) + 
+  labs(
+       subtitle="Hour 20", 
+       x="Date",
+       y="EUR/MWh")
+
+p6 <- ggplot(DBHour("H20"), aes(HU)) +
+  geom_histogram(bins = 100,
+                 col = "grey95",
+                 fill = "black", 
+                 alpha = .80) +
+  labs(x = "EUR/MWh", y = "Frequency",subtitle="Hour 20") +
+  theme(title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10, face = "bold"))
+pfinal <- grid.arrange (p1,p2,p3,p4,p5,p6,ncol=2,
+                layout_matrix = rbind(c(1, 2),
+                        c(3, 4),c(5,6))
+)
+ggsave(file="/Users/marijanrancic/Documents/IMQF/Master/Master teza TEXT/Slike/DBTS-HU-3x2Hourly2.jpg",pfinal,width = 18, height = 12, dpi = 300, units = "cm")
+rm(p1,p2,p3,p4,p5,p6,pfinal)
+```
+
+## Scatter plot
+```{r Graph_Scatter}
+library(ggplot2)
+
+theme_set(theme_bw())  # pre-set the bw theme.
+
+# g <- ggplot(DBTS, aes(x=temp,y=LoadF,fill=DHour))
+# # Scatter plot
+# g + geom_point() + 
+#   geom_smooth(method="lm", se=F) +
+#   labs(y="Load Forecast", 
+#        x="Temperature")
+
+
+g <- ggplot(DBTS %>% filter(year(date.time)==2018 & hour(date.time)==06), aes(x=TempHU,y=FLoadHU,shape=DHour)) 
+g + geom_point() + 
+geom_smooth(method="lm", se=F) +
+labs(y="Load Forecast", 
+x="Temperature")
+
+```
+##Napomena
+Ovaj grafik nece dati previse neku korelaciju. Trebalo bi videti samo sta se desava u zimskim mesecima, a to radimo ispod
+
+
+The next thing we are doing is Meteorological seasons filtering. 
+
+
+```{r}
+library(dplyr)
+
+g <- ggplot(DBTS, aes(HU, RS))
+g1 <- g + geom_jitter(aes(col=DHour)) + 
+  geom_smooth(aes(col=DHour), method="lm", se=F)+
+   labs(
+        y="SEEPEX hourly prices", 
+        x="HUPX hourly pricese")
+
+ggsave(file="/Users/marijanrancic/Documents/IMQF/Master/Master teza TEXT/Slike/DBTS-HU-RS-HCorrelation.jpg",g1,width = 18, height = 12, dpi = 300, units = "cm")
+rm(g1)
+g <- ggplot(DBTS.SPREAD, aes(HU, RS,colour=Flag))
+g + geom_jitter()+
+   labs(
+        y="SEEPEX daily prices", 
+        x="HUPX daily pricese")
+```
+
+
+
+```{r Descriptive Statistic}
+library(moments)
+library(tseries)
+hourlyprices <- DBTS$HU
+show_moments(hourlyprices)
+adf.test(hourlyprices)
+
+
+#“The cross-correlation function helps you discover lagged correlations between two time series. A lagged correlation occurs when today’s value in one time series #is correlated with a future or past value in the other time series.”
+
+ccf(DBTS$HU,DBTS$FLoadHU, main="Price vs Temp")
+
+
+ 
+```
+
+
+```{r Financial assets vs Electricity Price, echo=FALSE}
+
+ 
+ #UZECU DJI INDEX RETURNS ZA ISTI PERIOD DA UPOREDIM ---------------
+ #------KOMENT JER SAM VEC TO URDIO -
+# dji_raw <- read_excel("/Users/marijanrancic/Documents/IMQF/Master/Data/DJI2017-2019.xlsx")
+# dji.ts <- dji_raw %>%
+#   mutate(datum= ymd(datum)) %>%
+#   as_tsibble(index =datum)
+# 
+# peak <- read_excel("/Users/marijanrancic/Documents/IMQF/Master/Data/FRM/DB_FRM.xlsx", sheet = 1)
+# peak.ts <- peak %>%
+#   mutate(datum= ymd(datum)) %>%
+#   as_tsibble(index =datum)
+# 
+# ts_com <- left_join(dji.ts , peak.ts ,
+#           by = c("datum" = "datum")) %>% filter(!is.na(Close))
+
+
+# names(ts_com)[4] <- "ReturnsPeakPrice"
+# names(ts_com)[5] <- "ReturnsDJI"
+#--------------------------------------------------------------------
+ library(gridExtra)
+
+# - grafik sa returns
+coeff <- 1 #scale levog i desnog grafika, ako je 10 na desnom ce biti 10puta veca vrednost
+p3 <- ggplot(ts_com, aes(x=datum)) +
+  geom_line( aes(y=SimpleRet), color='red') + 
+  geom_line( aes(y=Returns), color='blue') + 
+  scale_y_continuous(
+    name = "Returns",
+    sec.axis = sec_axis(~.*coeff)
+  ) + 
+  labs(subtitle = "Daily returns on DJI index (red) and HUPX peak price (blue)",
+      
+       x="Year",
+       y="EUR/MWh")
+# - grafik sa cenama
+
+p1 <- ggplot(ts_com, aes(x=datum)) +
+  geom_line( aes(y=peak_price), color='blue') +labs(y="HUPX peak price", x="Year")
+p2 <- ggplot(ts_com, aes(x=datum)) +
+  geom_line( aes(y=Close), color='red') +labs(y="DJI Index", x="Year")
+
+pfinal <- grid.arrange (p1,p2,p3,ncol=2,
+                layout_matrix = rbind(c(1, 2),
+                        c(3, 3))
+)
+
+ggsave(file="/Users/marijanrancic/Documents/IMQF/Master/Master teza TEXT/Slike/dji_hupx1.jpg",pfinal)
+
+
+
+```
+
+# Learning part 
+## Fitting examples form the NET
+Learning process that will be used for my master thesis
+
+
+
+```{r Learning_Forecast1}
+
+library(fpp3)
+y <- DBTS
+y1 <- DBTS.SPREAD
+
+```
+
+
+```{r}
+
+
+y %>%
+  filter(year(date.time) > 2018) %>%
+  autoplot(HU) +
+    xlab("Year: 2017") + ylab(NULL) +
+    ggtitle("Load Forecast")
+```
+# Trend and seasonality
+When data are seasonal, the autocorrelations will be larger for the seasonal lags (at multiples of the seasonal frequency) than for other lags.
+
+```{r}
+p1 <- y1 %>% ACF(base.HU, lag_max = 21) %>% autoplot() +xlab("Timelags[days]") + ylab("Autocorrelation") + ggtitle("ACF - HUPX Base price")
+p2 <-y1 %>% ACF(ret.art.bHU, lag_max = 21) %>% autoplot()+xlab("Timelags[days]") + ylab("Autocorrelation") + ggtitle("ACF - HUPX Base price returns")
+p3 <-y1 %>% PACF(base.HU, lag_max = 21) %>% autoplot()+xlab("Timelags[days]") + ylab("Autocorrelation") + ggtitle("PACF - HUPX Base price")
+p4 <-y1 %>% PACF(ret.art.bHU, lag_max = 21) %>% autoplot()+xlab("Timelags[days]") + ylab("Autocorrelation") + ggtitle("PACF - HUPX Base price returns")
+
+pfinal <- grid.arrange(p1,p2,p3,p4)
+ggsave(file="/Users/marijanrancic/Documents/IMQF/Master/Data/Images/acf1.jpg",pfinal)
+# Playing
+
+
+```
+Ovaj deo je komentiran jer ne daje lepe slike ovde
+Moze se iz skripta uraditi
+
+
+```{r Correlation}
+# library(GGally)
+# y2 <- y1 %>% 
+#   select(c(base_price,generation,loadF,avg_temp)) 
+# 
+# y2 %>% 
+#   GGally::ggpairs(columns = 1:4)
+```
+
+#TS components
+The output above shows the components of an STL decomposition. The original data is shown (as base_price), followed by the estimated components. This output forms a “dable” or decomposition table. The header to the table shows that the priceseries has been decomposed additively.
+
+Ja sam to dole uzeo kao koment da ne pirkazuje
+
+```{r STL decomosition}
+# Bitno je da je y tibble !!!!
+#y1 <- y1[-1,]
+dcmp <- y1 %>% model(STL(base.HU))
+dcmp2 <- y2 %>% model(STL(HU))
+#components(dcmp) 
+#ovo je comented da be bi prikaivao
+y1 %>%
+  autoplot(base.HU, color='gray') +
+  autolayer(components(dcmp), trend, color='red') +
+  xlab("Year") + ylab("HUPX Base Price") 
+
+components(dcmp) %>% autoplot() + xlab("Year")
+components(dcmp2) %>% autoplot() + xlab("Year")
+y1 %>%
+  model(STL(base.HU ~ trend(window=21) + season(window='periodic'),
+    robust = TRUE)) %>%
+  components() %>%
+  autoplot()
+
+
+
+```
+# Moving Average 
+```{r}
+#mora prvo y1 da bude ispravan format
+mydata1 <- y1 %>%
+  mutate(
+    mv7 = slider::slide_dbl(base.HU, mean, .before=3, .after=3, .complete=TRUE)
+  )
+mydata1 %>%
+  autoplot(base.HU) +
+  autolayer(mydata1, mv7, color='red') +
+  xlab("Year") + ylab("Base price") +
+  ggtitle("HUPX base price with Moving Average") +
+  guides(colour=guide_legend(title="series"))
+
+```
+
+```{r zgodno za master iz knjige}
+#Most seasonal hour Mislim da je H8
+
+y1 %>%
+  features(spot_price, feat_stl) %>%
+  filter(seasonal_strength_week == max(seasonal_strength_week)) %>%
+  left_join(y1, by = "hour") %>%
+  ggplot(aes(x = date.time, y = spot_price)) + geom_line() +
+  facet_grid(vars(hour))
+
+# y1_features <- y %>%
+#   features(base_price, feature_set(pkgs="feasts"))
+```
+
+
+# Least square estimation for prices
+
+```{r}
+#prvo konvert u TSIBLLE
+frm_smooth2 <- frm_smooth1 %>%
+  mutate(date= ymd(date)) %>%
+  as_tsibble(index =date)
+
+frm_smooth3 <- frm_smooth2 %>%
+  mutate(
+    mv7 = slider::slide_dbl(peak_price, mean, .before=3, .after=3, .complete=TRUE)
+  )
+frm_smooth3 <- frm_smooth3 %>% drop_na(mv7) # Remove NA vrednosti
+
+frm_smooth3 %>%
+  autoplot(peak_price) +
+  autolayer(frm_smooth3 , mv7, color='red') +
+  xlab("Year") + ylab("Base price") +
+  ggtitle("SEEPEX peak price with Moving Average") +
+  guides(colour=guide_legend(title="series"))
+
+# a da probamo STD decompresiju
+
+
+
+```
+
+
+```{r}
+DBTS
+```
+

@@ -1,0 +1,529 @@
+---
+title: "Master Thesis 5.0"
+author: "Marijan Rancic"
+date: "10/10/2020"
+output: html_document
+editor_options: 
+chunk_output_type: inline
+---
+
+
+## Set working directory
+This Chunk is optional and prior run it, please make sure you have your project working directory set.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = "/Users/marijanrancic/Documents/IMQF/Master/QuantRSpace/MasterProject/FinalMasterWork/")
+getwd()
+```
+
+## Problem description
+This is one of the final versions of the file. Working versions in which, some models were discussed and/or optmized will be delivered under working files directory.
+
+Dependent variables:
+- HU
+- HU-RS
+
+Predictors:
+- WGenRO 
+- GenHU
+- FLoadHU 
+- TempHU 
+
+as well as lagged values of these predictors and the dependent variables are also allowed.
+
+## Load libraries
+```{r}
+library(readxl)
+library(lubridate)
+library(fastDummies)
+library(tidyverse)
+library(prophet)
+library(randomForest)
+library(gbm)
+```
+
+## Import data
+```{r}
+prices<-read_excel("Data/MainDB.xlsx") #This is under MR working directory structure. Make sure you have the same structure or full link to the files.
+holidays<-read_excel("Data/HollidayHU.xlsx")
+
+prices<-prices%>%
+  left_join(holidays,by=c("datum"="Date"))%>%
+  rename("Holiday"="Flag")%>%
+  replace_na(list(Holiday=0))
+
+prices$DHour<-factor(prices$DHour)
+prices$hour_num<-hour(dmy_hm(prices$date.time))
+prices$weekday<-factor(weekdays(prices$datum))
+prices$month<-factor(months(prices$datum))
+prices$HU_RS=prices$HU-prices$RS
+```
+
+
+## Generate dummy variables for weekday, month and hour
+```{r}
+prices <- dummy_cols(prices, 
+                     select_columns = c('weekday', 'month','DHour'),
+                     remove_selected_columns = TRUE)
+```
+
+
+## Inspect autocorrelation patterns
+Lag 1 cannot be accounted for, but may represent some trend. Lag 24 can be accounted for.
+```{r}
+acf(prices$HU, lag.max=200, plot=TRUE)
+pacf(prices$HU, lag.max=200, plot=TRUE)
+acf(prices$HU_RS, lag.max=200, plot=TRUE)
+pacf(prices$HU_RS, lag.max=200, plot=TRUE)
+```
+
+## Stationarity test
+
+Both series of interest are stationary
+```{r}
+library(tseries)
+adf.test(prices$HU)
+adf.test(prices$HU_RS)
+```
+## Plots of relationships
+```{r}
+library(ggplot2)
+ggplot(data=prices, aes(x=datum,y=HU))+geom_line()
+
+ggplot(data=prices,aes(x=TempHU,y=HU))+
+  geom_point()+
+  geom_smooth()
+
+ggplot(data=prices,aes(x=GenHU,y=HU))+
+  geom_point()+
+  geom_smooth()
+
+ggplot(data=prices,aes(x=WGenRO,y=HU))+
+  geom_point()+
+  geom_smooth()
+
+ggplot(data=prices,aes(x=FLoadHU,y=HU))+
+  geom_point()+
+  geom_smooth()
+
+```
+
+## Generate lagged values
+We allow our models to include lagged values of the dependent variable (24 hours ago), as well as lagged values of predictors (24 hours ago and 1 hour ago) in addition to variables reflecting weekday, month, hour and the values of predictors in the hour for which the prediction is made.
+
+```{r}
+library("Hmisc")
+# generate all sensible lags to be used as predictors
+prices$HU_lag24=Lag(prices$HU,24)
+prices$RS_lag24=Lag(prices$RS,24)
+
+prices$WGenRO_lag24=Lag(prices$WGenRO,24)
+prices$GenHU_lag24=Lag(prices$GenHU,24)
+prices$FLoadHU_lag24=Lag(prices$FLoadHU,24)
+prices$TempHU_lag24=Lag(prices$TempHU,24)
+
+prices$WGenRO_lag1=Lag(prices$WGenRO,1)
+prices$GenHU_lag1=Lag(prices$GenHU,1)
+prices$FLoadHU_lag1=Lag(prices$FLoadHU,1)
+prices$TempHU_lag1=Lag(prices$TempHU,1)
+
+prices$WGenRO_lag2=Lag(prices$WGenRO,2)
+prices$GenHU_lag2=Lag(prices$GenHU,2)
+prices$FLoadHU_lag2=Lag(prices$FLoadHU,2)
+prices$TempHU_lag2=Lag(prices$TempHU,2)
+```
+
+## Baseline regression models to see which ones make sense.
+```{r}
+reg_HU=lm(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(prices,is.numeric))
+summary(reg_HU)
+
+reg_HU_RS=lm(HU_RS~.-RS-HU-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(prices,is.numeric))
+summary(reg_HU_RS)
+```
+## Time series cross-validation
+We use time series crossvalidation: take all data up to day t (thousands of observations) and predict for day t+1 (24 observations). But one testing sample is not enough so we do it for t from Jan 1 2019 to December 31 2019 - a total of 365 tests. this is an extremely computationally intensive approach, but it gives us a robust idea of what to expect from one-day ahead forecasts (what are typical mistakes, what is the average daily in 90% of cases? 99% of cases?).
+
+Create a vector of 30 random test dates (parameter size=30) from 2019 data (a potential pool of 365 days). If you want to apply each model to a single date, just specify only this date as both start and end date and size=1 it will choose only from 1 date. In this example, the forecast will be for May 25 2019 only.
+```{r}
+library(lubridate)
+set.seed(100)
+test_dates<-sample(seq.Date(ymd("2019-05-25"),ymd("2019-05-25"),by=1),size=1) #amend size to desired pool 
+```
+
+
+## ARIMA model for HU with stepwise selection of predictors (to avoid overfitting)
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+arima_mae_HU=numeric()
+arima_mape_HU=numeric()
+arima_rmse_HU=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# rename variables so that they correspond to input expected by the prophet algorithm.
+#arima <- step(lm(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`,data=select_if(na.omit(training),is.numeric)))
+arima <- lm(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric))
+forecast_arima_HU <- predict(arima, na.omit(testing))
+k=k+1
+arima_mae_HU[k]=mean(abs(forecast_arima_HU -testing$HU))
+arima_mape_HU[k]=mean(abs((forecast_arima_HU -testing$HU)/(testing$HU)*100))
+arima_rmse_HU[k]=sqrt(mean(abs(forecast_arima_HU-testing$HU)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(arima_mae_HU)
+mean(arima_mape_HU)
+mean(arima_rmse_HU)
+```
+
+## ARIMA model for HU_RS with stepwise selection of predictors (to avoid overfitting)
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+arima_mae_HU_RS=numeric()
+arima_mape_HU_RS=numeric()
+arima_rmse_HU_RS=numeric()
+arima_mde_HU_RS=numeric()
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# rename variables so that they correspond to input expected by the prophet algorithm.
+arima <- lm(HU_RS~.-RS-HU-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric))
+forecast_arima_HU_RS <- predict(arima, na.omit(testing))
+k=k+1
+arima_mae_HU_RS[k]=mean(abs(forecast_arima_HU_RS-testing$HU_RS))
+arima_mape_HU_RS[k]=mean(abs((forecast_arima_HU_RS-testing$HU_RS)/(testing$HU_RS)*100))
+arima_mde_temp = mean(testing$HU_RS)
+arima_mde_HU_RS[k]=mean(abs((forecast_arima_HU_RS-testing$HU_RS)/(arima_mde_temp)*100))
+arima_rmse_HU_RS[k]=sqrt(mean(abs(forecast_arima_HU_RS-testing$HU_RS)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(arima_mae_HU_RS)
+mean(arima_mape_HU_RS)
+mean(arima_rmse_HU_RS)
+mean(arima_mde_HU_RS)
+```
+
+
+----------------------------------------------------------------------------
+
+## Prophet model for HU
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+prophet_mae_HU=numeric()
+prophet_mape_HU=numeric()
+prophet_rmse_HU=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+# prepare dataset prophet_df according to prophet standards
+library(lubridate)
+prophet_df<-prices
+prophet_df$ds<-dmy_hm(prophet_df$date.time)
+prophet_df$y=prices$HU
+
+# split sample
+training<-subset(prophet_df, ymd(datum)<date)
+testing<-subset(prophet_df, ymd(datum)==date)
+
+# Specify model
+m <- prophet(yearly.seasonality = 20)
+m <- add_regressor(m, "WGenRO")
+m <- add_regressor(m, "GenHU")
+m <- add_regressor(m, "FLoadHU")
+m <- add_regressor(m, "TempHU")
+m <- add_regressor(m, "HU_lag24")
+m <- add_regressor(m, "WGenRO_lag24")
+m <- add_regressor(m, "GenHU_lag24")
+m <- add_regressor(m, "FLoadHU_lag24")
+m <- add_regressor(m, "TempHU_lag24")
+m <- add_regressor(m, "Holiday")
+m_HU <- fit.prophet(m, na.omit(training))
+forecast_prophet_HU <- predict(m_HU, na.omit(testing))
+k=k+1
+prophet_mae_HU[k]=mean(abs(forecast_prophet_HU$yhat-testing$HU))
+prophet_mape_HU[k]=mean(abs((forecast_prophet_HU$yhat-testing$HU)/(testing$HU)*100))
+prophet_rmse_HU[k]=sqrt(mean(abs(forecast_prophet_HU$yhat-testing$HU)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(prophet_mae_HU)
+mean(prophet_mape_HU)
+mean(prophet_rmse_HU)
+```
+
+## Prophet model for HU-RS
+I set counter k=0. It will be used as an index in the loop.
+I create empty vectors for MAE and MAPE.
+```{r}
+k=0
+prophet_mae_HU_RS=numeric()
+prophet_mape_HU_RS=numeric()
+prophet_rmse_HU_RS=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+# prepare dataset prophet_df according to prophet standards
+library(lubridate)
+prophet_df<-prices
+prophet_df$ds<-dmy_hm(prophet_df$date.time)
+prophet_df$y=prophet_df$HU-prophet_df$RS
+
+# split sample
+training<-subset(prophet_df, ymd(datum)<date)
+testing<-subset(prophet_df, ymd(datum)==date)
+
+# Specify model
+m <- prophet(yearly.seasonality = 20)
+m <- add_regressor(m, "WGenRO")
+m <- add_regressor(m, "GenHU")
+m <- add_regressor(m, "FLoadHU")
+m <- add_regressor(m, "TempHU")
+m <- add_regressor(m, "HU_lag24")
+m <- add_regressor(m, "WGenRO_lag24")
+m <- add_regressor(m, "GenHU_lag24")
+m <- add_regressor(m, "FLoadHU_lag24")
+m <- add_regressor(m, "TempHU_lag24")
+m <- add_regressor(m, "Holiday")
+m_HU_RS <- fit.prophet(m, na.omit(training))
+forecast_prophet_HU_RS <- predict(m_HU_RS, na.omit(testing))
+k=k+1
+prophet_mae_HU_RS[k]=mean(abs(forecast_prophet_HU_RS$yhat-testing$y))
+prophet_mape_HU_RS[k]=mean(abs((forecast_prophet_HU_RS$yhat-testing$y)/(testing$y)*100))
+prophet_rmse_HU_RS[k]=sqrt(mean(abs(forecast_prophet_HU_RS$yhat-testing$y)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(prophet_mae_HU_RS)
+mean(prophet_mape_HU_RS)
+mean(prophet_rmse_HU_RS)
+```
+
+
+
+## Random Forest for HU
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+rf_mae_HU=numeric()
+rf_mape_HU=numeric()
+rf_rmse_HU=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# rename variables so that they correspond to input expected by the prophet algorithm.
+#arima <- step(lm(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`,data=select_if(na.omit(training),is.numeric)))
+rf <- randomForest(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric))
+forecast_rf_HU <- predict(rf, na.omit(testing))
+k=k+1
+rf_mae_HU[k]=mean(abs(forecast_rf_HU-testing$HU))
+rf_mape_HU[k]=mean(abs((forecast_rf_HU-testing$HU)/(testing$HU)*100))
+rf_rmse_HU[k]=sqrt(mean(abs(forecast_rf_HU-testing$HU)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(rf_mae_HU)
+mean(rf_mape_HU)
+mean(rf_rmse_HU)
+```
+
+## RF for HU_RS 
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+rf_mae_HU_RS=numeric()
+rf_mape_HU_RS=numeric()
+rf_rmse_HU_RS=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# rename variables so that they correspond to input expected by the prophet algorithm.
+rf<- randomForest(HU_RS~.-RS-HU-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric))
+forecast_rf_HU_RS <- predict(rf, na.omit(testing))
+k=k+1
+rf_mae_HU_RS[k]=mean(abs(forecast_rf_HU_RS -testing$HU_RS))
+rf_mape_HU_RS[k]=mean(abs((forecast_rf_HU_RS -testing$HU_RS)/(testing$HU_RS)*100))
+rf_rmse_HU_RS[k]=sqrt(mean(abs(forecast_rf_HU_RS -testing$HU_RS)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(rf_mae_HU_RS)
+mean(rf_mape_HU_RS)
+mean(rf_rmse_HU_RS)
+```
+
+
+## GBM for HU
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+gbm_mae_HU=numeric()
+gbm_mape_HU=numeric()
+gbm_rmse_HU=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# build model
+gbm_HU <- gbm(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric),n.trees=2000)
+forecast_gbm_HU <- predict(gbm_HU, na.omit(testing))
+k=k+1
+gbm_mae_HU[k]=mean(abs(forecast_gbm_HU-testing$HU))
+gbm_mape_HU[k]=mean(abs((forecast_gbm_HU-testing$HU)/(testing$HU)*100))
+gbm_rmse_HU[k]=sqrt(mean(abs(forecast_gbm_HU-testing$HU)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(gbm_mae_HU)
+mean(gbm_mape_HU)
+mean(gbm_rmse_HU)
+```
+
+## GBM for HU_RS 
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+gbm_mae_HU_RS=numeric()
+gbm_mape_HU_RS=numeric()
+gbm_rmse_HU_RS=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# rename variables so that they correspond to input expected by the prophet algorithm.
+gbm_HU_RS<-gbm(HU_RS~.-RS-HU-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric),n.trees=2000)
+forecast_gbm_HU_RS <- predict(gbm_HU_RS, na.omit(testing))
+k=k+1
+gbm_mae_HU_RS[k]=mean(abs(forecast_gbm_HU_RS -testing$HU_RS))
+gbm_mape_HU_RS[k]=mean(abs((forecast_gbm_HU_RS -testing$HU_RS)/(testing$HU_RS)*100))
+gbm_rmse_HU_RS[k]=sqrt(mean(abs(forecast_gbm_HU_RS -testing$HU_RS)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(gbm_mae_HU_RS)
+mean(gbm_mape_HU_RS)
+mean(gbm_rmse_HU_RS)
+```
+
+## Plot forecasts (only when test_dates consists of 1 day)
+```{r}
+data_HU=data.frame(hour=rep(1:24,5),
+                type=c(rep("HU_actual",24),
+                       rep("HU_arima",24),
+                       rep("HU_prophet",24),
+                       rep("HU_rf",24),
+                       rep("HU_gbm",24)),
+                value=c(subset(prices,datum==test_dates)$HU,
+                        forecast_arima_HU,
+                        forecast_prophet_HU$yhat,
+                        forecast_rf_HU,
+                        forecast_gbm_HU))
+ggplot(data_HU,aes(x=hour,y=value,color=type))+
+  geom_line()
+
+
+data_HU_RS=data.frame(hour=rep(1:24,5),
+                type=c(rep("HU_RS_actual",24),
+                       rep("HU_RS_arima",24),
+                       rep("HU_RS_prophet",24),
+                       rep("HU_RS_rf",24),
+                       rep("HU_RS_gbm",24)),
+                value=c(subset(prices,datum==test_dates)$HU_RS,
+                        forecast_arima_HU_RS,
+                        forecast_prophet_HU_RS$yhat,
+                        forecast_rf_HU_RS,
+                        forecast_gbm_HU_RS))
+ggplot(data_HU_RS,aes(x=hour,y=value,color=type))+
+  geom_line()
+```
+
+
+## Decomposition based on prophet
+The decomposition gives useful tips on which time of day, weekday, and month have higher values of the dependent variable based on the decomposition model (Prophet).
+For the HU model
+```{r}
+prophet_plot_components(m_HU, forecast_prophet_HU)
+```
+
+For the HU-RS model
+```{r}
+prophet_plot_components(m_HU_RS, forecast_prophet_HU_RS)
+```
+
+## Variable importance (based on GBM algorithm which has a good built-in functionality for variable importance assessment)
+
+*rel.inf* reflects % contribution of each variable to the model's explanatory power. Some of the variables have 0% contribution, which is fine - the model captures a lot of interactions between features and some of them may already contain what a traditional model would regard as the effect of a particular hour of the day, etc.
+
+For the HU model
+```{r}
+summary(gbm_HU,plotit = FALSE)
+```
+
+For the HU-RS model
+```{r}
+summary(gbm_HU_RS,plotit = FALSE)
+```
+
+

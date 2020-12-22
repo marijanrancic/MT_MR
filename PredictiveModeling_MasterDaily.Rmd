@@ -1,0 +1,230 @@
+---
+title: "Master Thesis 5.1"
+author: "Marijan Rancic"
+date: "10/11/2020"
+output: html_document
+editor_options: 
+chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# LOADING PACKAGES 
+
+```{r}
+library(forecast)
+library(tseries)
+```
+
+# PREPROCESSING 
+
+## Reading data  
+
+```{r}
+ls(daily_prices)
+```
+
+# The Predicting Variables 
+
+- base.HU
+- peak.HU
+
+# The Exogenous Variables 
+- WGenRO
+- GenHU
+- TempHU
+- FLoad
+- CO2Price
+
+# The dummy variables 
+
+- Days
+- Holiday
+months
+
+
+# Stationarity Assesment & Time Series Transformation 
+
+For this, we can use the Augmented Dickey-Fuller (ADF) test and Phillips-Pherron which both tests the null hypothesis that the series is non-stationary. This is included in the "tseries" package.
+
+```{r}
+adf.test(daily_prices$base.HU, alternative="stationary")
+# adf.test(daily_prices$peak.HU, alternative="stationary")
+```
+
+```{r}
+PP.test(daily_prices$base.HU)
+# PP.test(daily_prices$peak.HU)
+```
+
+Hypothesis: 
+Null Hypothesis: There is a Unit Root for the series 
+Alternative Hypothesis: There is no Unit Root for the series. The series is stationary. 
+
+Interpretaion: OK, p-value is way below 0.05. Looks like our data is indeed stationary. Given 
+that we had no reason to difference the data, the d value for our ARIMA model is 0. 
+
+
+# To illustrate out of sample forecasting with covariates, lets splt the data into train and valid.
+
+```{r}
+daily_set=daily_prices[1:1095, ]
+daily_set=ts(daily_set, start=1)
+
+```
+Here is just one of the instances without months and lags
+```{r}
+train=daily_set[1:730, ]
+valid=daily_set[731:1095, ]
+xreg1=as.matrix(train[, c("WGenRO", "GenHU", "FLoadHU", "TempHU", "CO2Price", "d1", "d2", "d3","d4","d5", "d6", "Holiday")])
+xreg2=as.matrix(valid[, c("WGenRO", "GenHU", "FLoadHU", "TempHU", "CO2Price", "d1", "d2", "d3","d4","d5", "d6", "Holiday")])
+xreg1=xreg1[, -1]
+xreg2=xreg2[, -1]
+```
+
+
+
+
+# fit model for base price 
+Fit and Output Model for Base Price
+```{r}
+
+fitModelA=auto.arima(train[, "base.HU"], seasonal = TRUE,allowdrift = TRUE,allowmean = TRUE,xreg=xreg1)
+#fitModelB=auto.arima(train[, "HU"], xreg=xreg1)
+fitModelB=Arima(train[, "base.HU"], order=c(5,0,0), xreg=xreg1)
+summary(fitModelA)
+summary(fitModelB)
+
+```
+
+
+
+
+
+# check the residualities of the model
+
+```{r}
+checkresiduals(fitModelA)
+checkresiduals(fitModelB)
+#checkresiduals(fitModelC)
+```
+
+Note: An Auto ARIMAX model was used because the model itself will generate the optimal p, d, and q values which would be suitable for the data set to provide better forecasting. The model parameters are shown above. R estimates the parameters using log likelihood. From the standard errors, we see that all the parameters are more than 2 standard deviations away from zero. So all the parameters passed the t-test. The model also calculated the variance of the error term contained in the model. It also gives the likelihood AIC, and the BIC. 
+
+
+# To determine whether the errors in our ARIMA forecast are normally distributed with a mean of 0 and constant variance, we can also visualize our forecast errors with a time plot. 
+
+```{r}
+plot.ts(fitModelA$residuals)
+
+```
+
+This time plot should show that our forecast errors have generally equal variance over time, and that their mean is around zero
+
+```{r}
+fcast1=forecast(fitModelA, xreg=xreg2)
+fcast2=forecast(fitModelB, xreg=xreg2)
+#fcast3=forecast(fitModelC, xreg=xreg2)
+```
+
+```{r}
+fcast1
+
+```
+
+Visualisation
+
+```{r}
+plot(fcast1)
+plot(fcast2)
+#plot(fcast3)
+
+```
+
+Forecast Accuracy 
+
+```{r}
+accuracy(fcast1)
+accuracy(fcast2)
+
+```
+
+##PLOT
+This is only plot for manual window of forecast. Make sure that you address properly length on the vector below
+```{r}
+
+ library(zoo)
+ df <-
+   data.frame(real = daily_prices$base.HU[1:942],
+              pred = c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast1)[,1])),data.frame(fcast1)[,1]),
+              time =  zoo::as.Date(seq(as.Date("2017/1/1"), as.Date("2019/07/31"), by = "day"), format = "%Y-%m-%d"),
+              Lo80 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast1)[,2])),data.frame(fcast1)[,2]),
+              Hi80 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast1)[,3])),data.frame(fcast1)[,3]),
+              Lo95 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast1)[,4])),data.frame(fcast1)[,4]),
+              Hi95 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast1)[,5])),data.frame(fcast1)[,5])) 
+ 
+ df2 <-
+   data.frame(real = daily_prices$base.HU[1:942],
+              pred = c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast2)[,1])),data.frame(fcast2)[,1]),
+              time =  zoo::as.Date(seq(as.Date("2017/1/1"), as.Date("2019/07/31"), by = "day"), format = "%Y-%m-%d"),
+              Lo80 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast2)[,2])),data.frame(fcast2)[,2]),
+              Hi80 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast2)[,3])),data.frame(fcast2)[,3]),
+              Lo95 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast2)[,4])),data.frame(fcast2)[,4]),
+              Hi95 =c(rep(NA,length(daily_prices$base.HU[1:942])-length(data.frame(fcast2)[,5])),data.frame(fcast2)[,5]))
+ 
+ ggplot(df, aes(time, real, group = 1)) +
+   geom_line() +
+   geom_line(aes(time, pred, group = 1), color = "blue")+
+   geom_ribbon(aes(time, ymin = Lo95, ymax = Hi95), fill = "gray", alpha = 0.25) +
+   geom_ribbon(aes(time, ymin = Lo80, ymax = Hi80), fill = "red", alpha = 0.25) +
+   theme_light()
+ 
+ 
+ ggplot(df2, aes(time, real, group = 1)) +
+   geom_line() +
+   geom_line(aes(time, pred, group = 1), color = "blue")+
+   geom_ribbon(aes(time, ymin = Lo95, ymax = Hi95), fill = "gray", alpha = 0.25) +
+   geom_ribbon(aes(time, ymin = Lo80, ymax = Hi80), fill = "red", alpha = 0.25) +
+   theme_light()
+```
+## This is only when we have full 1095 data set forecasting
+This is for the particular example
+```{r}
+ library(zoo)
+ df <-
+   data.frame(real = daily_prices$base.HU,
+              pred = c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast1)[,1])),data.frame(fcast1)[,1]),
+              time =  zoo::as.Date(seq(as.Date("2017/1/1"), as.Date("2019/12/31"), by = "day"), format = "%Y-%m-%d"),
+              Lo80 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast1)[,2])),data.frame(fcast1)[,2]),
+              Hi80 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast1)[,3])),data.frame(fcast1)[,3]),
+              Lo95 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast1)[,4])),data.frame(fcast1)[,4]),
+              Hi95 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast1)[,5])),data.frame(fcast1)[,5])) 
+ 
+ df2 <-
+   data.frame(real = daily_prices$base.HU,
+              pred = c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast2)[,1])),data.frame(fcast2)[,1]),
+              time =  zoo::as.Date(seq(as.Date("2017/1/1"), as.Date("2019/12/31"), by = "day"), format = "%Y-%m-%d"),
+              Lo80 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast2)[,2])),data.frame(fcast2)[,2]),
+              Hi80 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast2)[,3])),data.frame(fcast2)[,3]),
+              Lo95 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast2)[,4])),data.frame(fcast2)[,4]),
+              Hi95 =c(rep(NA,length(daily_prices$base.HU)-length(data.frame(fcast2)[,5])),data.frame(fcast2)[,5])) 
+ 
+ ggplot(df, aes(time, real, group = 1)) +
+   geom_line() +
+   geom_line(aes(time, pred, group = 1), color = "blue")+
+   geom_ribbon(aes(time, ymin = Lo95, ymax = Hi95), fill = "gray", alpha = 0.25) +
+   geom_ribbon(aes(time, ymin = Lo80, ymax = Hi80), fill = "red", alpha = 0.25) +
+   theme_light()
+ 
+ 
+ ggplot(df2, aes(time, real, group = 1)) +
+   geom_line() +
+   geom_line(aes(time, pred, group = 1), color = "blue")+
+   geom_ribbon(aes(time, ymin = Lo95, ymax = Hi95), fill = "gray", alpha = 0.25) +
+   geom_ribbon(aes(time, ymin = Lo80, ymax = Hi80), fill = "red", alpha = 0.25) +
+   theme_light()
+```
+
+

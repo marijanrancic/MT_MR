@@ -1,0 +1,99 @@
+---
+title: "Master Thesis 1.0 - IMPORT DATA"
+author: "Marijan Rancic"
+date: "10/10/2020"
+output: html_document
+editor_options: 
+chunk_output_type: inline
+---
+
+
+## Set working directory
+This Chunk is optional and prior run it, please make sure you have your project working directory set.
+In addition, due to numerous versions and files, some code chunks are not the examples of best industry practice but I've had to hardwire some changes.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = "/Users/marijanrancic/Documents/IMQF/Master/QuantRSpace/MasterProject/FinalMasterWork/")
+getwd()
+```
+
+## Problem description
+This file serves only for importing data and I will erase importing parts in other files. 
+
+## Load libraries
+```{r}
+library(readxl)
+library(lubridate)
+library(fastDummies)
+library(tidyverse)
+source("myFunc.R") # some functions I've wrote that might help. Some are doubled. Appologize for being a dick!
+```
+
+## Import hourly data
+```{r}
+prices<-read_excel("Data/MainDB.xlsx") #This is under MR working directory structure. Make sure you have the same structure or full link to the files.
+holidays<-read_excel("Data/HollidayHU.xlsx")
+
+prices<-prices%>%
+  left_join(holidays,by=c("datum"="Date"))%>%
+  rename("Holiday"="Flag")%>%
+  replace_na(list(Holiday=0))
+
+prices$DHour1<-factor(prices$DHour)
+prices$hour_num<-hour(dmy_hm(prices$date.time))
+prices$weekday<-factor(weekdays(prices$datum))
+prices$month<-factor(months(prices$datum))
+prices$HU_RS=prices$HU-prices$RS
+```
+
+## Generate dummy variables for weekday, month and hour for hourly data
+```{r}
+prices <- dummy_cols(prices, 
+                     select_columns = c('weekday', 'month','DHour1'),
+                     remove_selected_columns = TRUE)
+```
+
+## Import daily data
+Here I've introduced several redundant datasets. The reason is that I've worked on so many versions that I wanted first to avoid errors. 
+Later, I'll start deleting them and streamline the code to only one datasets for particular problem. 
+```{r}
+# reading data  
+daily_prices1=read.csv("Data/MainDB_Daily1.csv") # I needed extra for plotting //has no other purpose
+daily_prices<-read_excel("Data/MainDB_daily.xlsx") #This is under MR working directory structure. Make sure you have the same structure or full link to the files.
+
+#Holiday is already included in the list. Otherwise, see above how I've joined table for similar exercise. 
+daily_prices$month<-factor(months(daily_prices$datum))
+```
+## Generate dummy variables for month
+```{r}
+daily_prices <- dummy_cols(daily_prices, 
+                     select_columns = 'month',
+                     remove_selected_columns = TRUE)
+```
+
+
+## I've followed Forecasting: Principles and Practice by Rob J Hyndman and George Athanasopoulos
+This is again some doubled dataset's created for exploring, graphics, etc. and should be streamlined. 
+```{r}
+library(fpp3) # it will mask some purr methods so make sure to turn on purr later for particular tasks
+DBTS <- prices %>%
+  mutate(date.time= dmy_hm(date.time)) %>%
+  as_tsibble(index =date.time, key=c(hour_num))
+DBTS <- DBTS %>% arrange(., date.time)
+```
+and daily values as .SPREAD
+```{r}
+DBTS.SPREAD <- daily_prices %>%
+  mutate(datum= ymd(datum)) %>%
+  as_tsibble(index =datum)
+DBTS.SPREAD <- DBTS.SPREAD %>% arrange(., datum)
+```
+
+## Additional set for DCC 
+We are using R package rmgarch by Alexios Ghalanos Copyright (C) 2008-2016.
+```{r}
+y = daily_prices[,c(24,26)]
+row.names(y) <- DBTS.SPREAD$datum #Depreciated in some versions
+```
+
