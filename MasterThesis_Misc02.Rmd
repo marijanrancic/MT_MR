@@ -1,0 +1,72 @@
+---
+title: "MT_Spread"
+author: "MR"
+date: "11/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(fpp3)
+```
+
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r Bas}
+
+ggplot(DBTS.SPREAD, aes(x=datum)) + 
+  geom_line(aes(y=base.spread)) + 
+  labs(
+       subtitle="HUPX-SEEPEX Base Spread", 
+       x="Date",
+       y="EUR/MWh")
+
+ggplot(DBTS.SPREAD, aes(x=datum)) + 
+  geom_line(aes(y=peak.spread)) + 
+  labs(
+       subtitle="HUPX-SEEPEX Peak Spread", 
+       x="Date",
+       y="EUR/MWh")
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+base.moments <- show_moments(DBTS.SPREAD$base.spread)
+show_moments(DBTS.SPREAD$peak.spread)
+DBTS.SPREAD %>% ACF(base.HU, lag_max = 40) %>% autoplot() +xlab("Timelags[days]") + ylab("Autocorrelation") + ggtitle("ACF - HUPX Base Price")
+
+```
+Let's how meany are coming out of +-3ST
+```{r}
+ 
+y <- DBTS.IN %>% filter(DHour=="H12")
+acf(y$HU)
+pacf(y$HU)
+```
+
+```{r}
+DBTS.SPREAD.F <- DBTS.SPREAD %>% filter(base.spread < 3*sd(DBTS.SPREAD$base.spread) & base.spread > -3*sd(DBTS.SPREAD$base.spread) )
+
+```
+Let's just check how it looks like
+```{r}
+ggplot(DBTS.SPREAD.F, aes(x=datum)) + 
+  geom_line(aes(y=base.spread)) + 
+  labs(
+       subtitle="HUPX-SEEPEX Base Spread", 
+       x="Date",
+       y="EUR/MWh")
+```
+
