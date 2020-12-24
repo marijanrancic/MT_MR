@@ -13,7 +13,7 @@ This Chunk is optional and prior run it, please make sure you have your project 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE,warning=FALSE, message=FALSE)
-knitr::opts_knit$set(root.dir = "/Users/marijanrancic/Documents/IMQF/Master/QuantRSpace/MasterProject/FinalMasterWork/")
+knitr::opts_knit$set(root.dir = "/Users/marijanrancic/Documents/IMQF/Master/QuantRSpace/MasterProject/MT_MR/MT_MR/")
 getwd()
 ```
 

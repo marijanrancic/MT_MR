@@ -86,6 +86,37 @@ xreg1=xreg1[, -1]
 xreg2=xreg2[, -1]
 ```
 
+## Generate lagged values
+We allow our models to include lagged values of the dependent variable (24 hours ago), as well as lagged values of predictors (24 hours ago and 1 hour ago) in addition to variables reflecting weekday, month, hour and the values of predictors in the hour for which the prediction is made.
+
+```{r}
+library("Hmisc")
+# generate all sensible lags to be used as predictors
+daily_prices$base.HU_lag1=Lag(daily_prices$base.HU,1)
+daily_prices$peak.HU_lag1=Lag(daily_prices$peak.HU,1)
+
+daily_prices$base.HU_lag7=Lag(daily_prices$base.HU,7)
+daily_prices$peak.HU_lag7=Lag(daily_prices$peak.HU,7)
+
+daily_prices$base.RS_lag1=Lag(daily_prices$base.RS,1)
+daily_prices$peak.RS_lag1=Lag(daily_prices$peak.RS,1)
+
+daily_prices$base.RS_lag7=Lag(daily_prices$base.RS,7)
+daily_prices$peak.RS_lag7=Lag(daily_prices$peak.RS,7)
+
+daily_prices$WGenRO_lag1=Lag(daily_prices$WGenRO,1)
+daily_prices$GenHU_lag1=Lag(daily_prices$GenHU,1)
+daily_prices$FLoadHU_lag1=Lag(daily_prices$FLoadHU,1)
+daily_prices$TempHU_lag1=Lag(daily_prices$TempHU,1)
+daily_prices$CO2Price_lag1=Lag(daily_prices$CO2Price,1)
+
+daily_prices$WGenRO_lag7=Lag(daily_prices$WGenRO,7)
+daily_prices$GenHU_lag7=Lag(daily_prices$GenHU,7)
+daily_prices$FLoadHU_lag7=Lag(daily_prices$FLoadHU,7)
+daily_prices$TempHU_lag7=Lag(daily_prices$TempHU,7)
+
+
+```
 
 
 

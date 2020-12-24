@@ -1,0 +1,195 @@
+---
+title: "Master Thesis 5.5 GBM"
+author: "Marijan Rancic"
+date: "10/10/2020"
+output: html_document
+editor_options: 
+chunk_output_type: inline
+---
+
+## IMPORTANT NOTE
+This file is integral part of the PredictiveModeling_Master and will work only if data has been imported.
+The purpose of this exercise is to evaluate best configuration for GBM.
+
+## Load libraries
+They should be already imported in the mail file.
+```{r}
+library(lubridate)
+library(tidyverse)
+library(gbm)
+```
+
+## Generate lagged values
+We allow our models to include lagged values of the dependent variable (24 hours ago), as well as lagged values of predictors (1 day or 7 days ago) in addition to variables reflecting weekday, month, hour and the values of predictors in the hour for which the prediction is made.
+This has been done in the PredictiveModeling_MasterDaily.
+
+## Keep this change in mind!
+In addition, I'll erase here returns which are columns 21-30 of daily_prices!
+```{r}
+daily_prices <- daily_prices[,-c(21:30)]
+```
+
+
+## Time series cross-validation
+We use time series crossvalidation: take all data up to day t (thousands of observations) and predict for day t+1 (24 observations). But one testing sample is not enough so we do it for t from Jan 1 2019 to December 31 2019 - a total of 365 tests. this is an extremely computationally intensive approach, but it gives us a robust idea of what to expect from one-day ahead forecasts (what are typical mistakes, what is the average daily in 90% of cases? 99% of cases?).
+
+Create a vector of 30 random test dates (parameter size=30) from 2019 data (a potential pool of 365 days). If you want to apply each model to a single date, just specify only this date as both start and end date and size=1 it will choose only from 1 date. In this example, the forecast will be for May 25 2019 only.
+```{r}
+library(lubridate)
+set.seed(100)
+test_dates<-sample(seq.Date(ymd("2019-01-25"),ymd("2019-01-25"),by=1),size=1)
+```
+
+
+
+----------------------------------------------------------------------------
+
+## GBM for HU - HOURLY SET
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+gbm_mae_HU=numeric()
+gbm_mape_HU=numeric()
+gbm_rmse_HU=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(prices, ymd(datum)<date)
+testing<-subset(prices, ymd(datum)==date)
+
+# build model
+gbm_HU <- gbm(HU~.-RS-HU_RS-`FlowHU-RS`-`FlowHU-RO`-hour_num,data=select_if(na.omit(training),is.numeric),
+              n.trees=2000, 
+              shrinkage = 0.05, 
+              distribution = "tdist",
+              interaction.depth = 1,
+              cv.folds = 5)
+forecast_gbm_HU <- predict.gbm(gbm_HU, na.omit(testing))
+k=k+1
+gbm_mae_HU[k]=mean(abs(forecast_gbm_HU-testing$HU))
+gbm_mape_HU[k]=mean(abs((forecast_gbm_HU-testing$HU)/(testing$HU)*100))
+gbm_rmse_HU[k]=sqrt(mean(abs(forecast_gbm_HU-testing$HU)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(gbm_mae_HU)
+mean(gbm_mape_HU)
+mean(gbm_rmse_HU)
+```
+
+## Some settings for GBM
+```{r}
+gbm.perf(gbm_HU, method = "cv")
+```
+
+
+For the HU model
+```{r}
+summary(gbm_HU,plotit = FALSE)
+```
+Create a vector of 30 random test dates (parameter size=30) from 2019 data (a potential pool of 365 days). If you want to apply each model to a single date, just specify only this date as both start and end date and size=1 it will choose only from 1 date. In this example, the forecast will be for May 25 2019 only.
+Copy from above
+```{r}
+library(lubridate)
+set.seed(100)
+test_dates<-sample(seq.Date(ymd("2019-05-25"),ymd("2019-09-25"),by=1),size=5)
+```
+## GBM for HU - DAILY SET
+```{r}
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+gbm_maeD_HU=numeric()
+gbm_mapeD_HU=numeric()
+gbm_rmseD_HU=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(daily_prices, ymd(datum)<date)
+testing<-subset(daily_prices, ymd(datum)==date)
+
+# build model
+gbm_HU_D <- gbm(base.HU~.,
+              data=select_if(na.omit(training),is.numeric),
+              n.trees=3000, 
+              shrinkage = 0.01, 
+              distribution = "tdist",
+              interaction.depth = 3,
+              cv.folds = 10)
+forecast_gbmD_HU <- predict.gbm(gbm_HU_D, na.omit(testing))
+k=k+1
+gbm_maeD_HU[k]=mean(abs(forecast_gbmD_HU-testing$base.HU))
+gbm_mapeD_HU[k]=mean(abs((forecast_gbmD_HU-testing$base.HU)/(testing$base.HU)*100))
+gbm_rmseD_HU[k]=sqrt(mean(abs(forecast_gbmD_HU-testing$base.HU)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(gbm_maeD_HU)
+mean(gbm_mapeD_HU)
+mean(gbm_rmseD_HU)
+```
+
+
+
+Similar 
+```{r}
+summary(gbm_HU_D,plotit = FALSE)
+```
+## GBM for RS - DAILY SET
+```{r}
+
+daily_prices4GBM <- daily_prices[,-c(3,5,6,7,46,47,48,49)]
+# set counter to 0 (will change in a loop)
+k=0
+
+# create empty vectors for MAE, MAPE and RMSE
+gbm_maeD_RS=numeric()
+gbm_mapeD_RS=numeric()
+gbm_rmseD_RS=numeric()
+
+# loop
+for (i in seq_along(test_dates)){
+date=test_dates[i]
+
+
+# split sample
+training<-subset(daily_prices4GBM, ymd(datum)<date)
+testing<-subset(daily_prices4GBM, ymd(datum)==date)
+
+# build model
+gbm_RS_D <- gbm(base.RS~.,data=select_if(na.omit(training),is.numeric),
+              n.trees=2000, 
+              shrinkage = 0.01, 
+              distribution = "tdist",
+              interaction.depth = 5,
+              cv.folds = 10)
+forecast_gbmD_RS <- predict.gbm(gbm_RS_D, na.omit(testing))
+k=k+1
+gbm_maeD_RS[k]=mean(abs(forecast_gbmD_RS-testing$base.RS))
+gbm_mapeD_RS[k]=mean(abs((forecast_gbmD_RS-testing$base.RS)/(testing$base.RS)*100))
+gbm_rmseD_RS[k]=sqrt(mean(abs(forecast_gbmD_RS-testing$base.RS)^2))
+}
+
+## Print mean error measures based on all dates included in testing
+mean(gbm_maeD_RS)
+mean(gbm_mapeD_RS)
+mean(gbm_rmseD_RS)
+```
+
+
+
+Similar 
+```{r}
+summary(gbm_RS_D,plotit = FALSE)
+```
